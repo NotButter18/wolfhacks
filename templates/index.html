@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Synapse | Snapshot</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <nav class="app-nav">
+        <a class="nav-link active" href="{{ url_for('home') }}">Snapshot</a>
+        <a class="nav-link" href="{{ url_for('behavior_engine') }}">Behavior</a>
+        <a class="nav-link" href="{{ url_for('prediction_engine') }}">Prediction</a>
+        <a class="nav-link" href="{{ url_for('solutions_page') }}">Solutions</a>
+      </nav>
+      <p class="eyebrow">Synapse</p>
+      <h1>Brampton Hospital Snapshot</h1>
+      <p class="subtitle">{{ snapshot.scenario }} sample data.</p>
+    </section>
+
+    <section class="scenario-strip">
+      <a class="scenario-button{% if scenario == 'low' %} active{% endif %}" href="{{ url_for('home', scenario='low') }}">Low</a>
+      <a class="scenario-button{% if scenario == 'normal' %} active{% endif %}" href="{{ url_for('home', scenario='normal') }}">Normal</a>
+      <a class="scenario-button{% if scenario == 'condition_x' %} active{% endif %}" href="{{ url_for('home', scenario='condition_x') }}">Condition X Crisis</a>
+    </section>
+
+    <section class="stats">
+      <article class="stat-card">
+        <div class="stat-label">Hospital Capacity</div>
+        <div class="stat-value">{{ snapshot.hospital_capacity }}</div>
+        <div class="stat-unit">beds / treatment capacity</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Patient Inflow</div>
+        <div class="stat-value">{{ snapshot.patient_inflow }}</div>
+        <div class="stat-unit">patients per hour</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Wait Time</div>
+        <div class="stat-value">{{ snapshot.wait_time_hours }}</div>
+        <div class="stat-unit">hours</div>
+      </article>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="panel">
+        <h2>Behavior</h2>
+        <p class="panel-text">Open the behavior engine to see the three behavior scores.</p>
+      </article>
+      <article class="panel">
+        <h2>Prediction</h2>
+        <p class="panel-text">Open the prediction engine to see the forecast and response.</p>
+      </article>
+      <article class="panel">
+        <h2>Source</h2>
+        <p class="panel-text">{{ hospital.name }}</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

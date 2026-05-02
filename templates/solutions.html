@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Synapse | Solutions</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <nav class="app-nav">
+        <a class="nav-link" href="{{ url_for('home', scenario=scenario) }}">Snapshot</a>
+        <a class="nav-link" href="{{ url_for('behavior_engine', scenario=scenario) }}">Behavior</a>
+        <a class="nav-link" href="{{ url_for('prediction_engine', scenario=scenario) }}">Prediction</a>
+        <a class="nav-link active" href="{{ url_for('solutions_page', scenario=scenario) }}">Solutions</a>
+      </nav>
+      <p class="eyebrow">Synapse</p>
+      <h1>Crisis Solutions</h1>
+      <p class="subtitle">Select an intervention to see its projected effect on Brampton traffic flow.</p>
+    </section>
+
+    <section class="scenario-strip">
+      <a class="scenario-button{% if scenario == 'low' %} active{% endif %}" href="{{ url_for('solutions_page', scenario='low') }}">Low</a>
+      <a class="scenario-button{% if scenario == 'normal' %} active{% endif %}" href="{{ url_for('solutions_page', scenario='normal') }}">Normal</a>
+      <a class="scenario-button{% if scenario == 'condition_x' %} active{% endif %}" href="{{ url_for('solutions_page', scenario='condition_x') }}">Condition X Crisis</a>
+    </section>
+
+    <!-- Flow Diagram -->
+    <section class="flow-diagram">
+      <div class="flow-label">Crisis Detected</div>
+      <div class="flow-arrow">▼</div>
+      <div class="flow-solutions">
+        {% for sol in solutions %}
+        <button class="flow-card{% if loop.first %} active{% endif %}" data-sol-index="{{ loop.index0 }}">
+          <span class="flow-icon">{{ sol.icon }}</span>
+          <span class="flow-name">{{ sol.name }}</span>
+        </button>
+        {% endfor %}
+      </div>
+      <div class="flow-arrow">▼</div>
+      <div class="flow-label">Prediction Engine</div>
+    </section>
+
+    <!-- Recommendation Banner -->
+    {% if recommended_reason %}
+    <section class="rec-banner">
+      <div class="rec-icon">✨</div>
+      <div class="rec-text">
+        <strong>Recommended Intervention: {{ solutions[recommended_index].name }}</strong>
+        <p>{{ recommended_reason }}</p>
+      </div>
+      <button class="primary-button" onclick="document.querySelector(`[data-sol-index='{{ recommended_index }}']`).click();">Apply Recommended</button>
+    </section>
+    {% endif %}
+
+    <!-- Solution Detail + Map -->
+    <section class="solution-detail">
+      <div class="solution-info">
+        <h2 id="sol-name"></h2>
+        <p class="panel-text" id="sol-desc"></p>
+        <div id="sol-diagram-container"></div>
+        <div class="sol-effect">
+          <p class="section-label">Projected Effect</p>
+          <p class="panel-text" id="sol-effect"></p>
+        </div>
+        <div class="sol-stats-row">
+          <div class="sol-stat">
+            <span class="section-label">Spawn Rate</span>
+            <strong id="sol-spawn"></strong>
+          </div>
+          <div class="sol-stat">
+            <span class="section-label">Facilities</span>
+            <strong id="sol-facilities"></strong>
+          </div>
+          <div class="sol-stat">
+            <span class="section-label">Vehicles</span>
+            <strong id="sol-vehicles">0</strong>
+          </div>
+        </div>
+        <button id="run-sol" class="primary-button" style="margin-top:18px;">Run Simulation</button>
+        <button id="reset-sol" class="secondary-button" style="margin-top:8px;">Reset</button>
+      </div>
+      <div class="solution-map-wrap">
+        <div class="map-stage">
+          <div id="sol-map"></div>
+          <div id="sol-loading" class="route-loading">
+            <div class="spinner"></div>
+            <span>Loading road geometry…</span>
+          </div>
+          <div class="map-legend">
+            <span><i class="legend-dot ambulance-dot"></i>Ambulances</span>
+            <span><i class="legend-dot car-dot"></i>Cars</span>
+            <span id="legend-redirected" class="hidden"><i class="legend-dot" style="background: #22c55e; border-color: #166534;"></i>Redirected</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="back-strip">
+      <a href="{{ url_for('prediction_engine', scenario=scenario) }}" class="secondary-button">← Back to Prediction</a>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script id="solutions-data" type="application/json">{{ solutions | tojson }}</script>
+  <script>
+  (function() {
+    "use strict";
+    const allSolutions = JSON.parse(document.getElementById("solutions-data").textContent);
+    let activeSolIdx = 0;
+    let running = false, rafId = null, dots = [], lastFrame = null, spawnAcc = 0;
+    let routesReady = false;
+
+    const SIM_SPEED = 80, ROUTE_THIN = 4;
+    const STYLE = {
+      ambulance: { fill: "#3b82f6", border: "#fff",   r: 7,   w: 2.5, kmh: [70, 110] },
+      car:       { fill: "#cbd5e1", border: "#64748b", r: 3.5, w: 0.5, kmh: [35, 60] },
+    };
+
+    /* ── Map ── */
+    const center = allSolutions[0].simulation.map_center;
+    const map = L.map("sol-map", {
+      zoomControl: false, attributionControl: false, dragging: true,
+      scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
+      keyboard: false, touchZoom: true,
+    }).setView([center.lat, center.lng], allSolutions[0].simulation.map_zoom);
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
+    const renderer = L.canvas({ padding: 0.5 });
+    map.createPane("dots").style.zIndex = 470;
+
+    let hospitalMarkers = [], originMarkers = [];
+
+    function drawMarkers(sim) {
+      hospitalMarkers.forEach(m => map.removeLayer(m));
+      originMarkers.forEach(m => map.removeLayer(m));
+      hospitalMarkers = []; originMarkers = [];
+
+      sim.hospitals.forEach(h => {
+        const color = h.kind === "popup" ? "#f59e0b" : "#6366f1";
+        const m = L.circleMarker([h.lat, h.lng], {
+          radius: 11, color, fillColor: color, fillOpacity: 1, weight: 3,
+          renderer, pane: "dots"
+        }).addTo(map).bindTooltip(h.name, { direction: "top", offset: [0, -12] });
+        hospitalMarkers.push(m);
+      });
+      sim.origins.forEach(o => {
+        const m = L.circleMarker([o.lat, o.lng], {
+          radius: 5, color: "#6b6b82", fillColor: "#6b6b82", fillOpacity: 0.9, weight: 1,
+          renderer, pane: "dots"
+        }).addTo(map).bindTooltip(o.name, { direction: "top", offset: [0, -8] });
+        originMarkers.push(m);
+      });
+    }
+
+    /* ── Routes ── */
+    const routeCache = new Map();
+    function thinRoute(pts) {
+      if (pts.length <= 3) return pts;
+      const out = [pts[0]];
+      for (let i = ROUTE_THIN; i < pts.length - 1; i += ROUTE_THIN) out.push(pts[i]);
+      out.push(pts[pts.length - 1]);
+      return out;
+    }
+    async function fetchRoute(origin, hospital) {
+      const key = `${origin.lat},${origin.lng}->${hospital.lat},${hospital.lng}`;
+      if (routeCache.has(key)) return routeCache.get(key);
+      try {
+        const r = await fetch(`/api/route?origin_lat=${origin.lat}&origin_lng=${origin.lng}&dest_lat=${hospital.lat}&dest_lng=${hospital.lng}`);
+        if (!r.ok) throw new Error(r.status);
+        const d = await r.json();
+        if (d.coordinates && d.coordinates.length > 1) {
+          const thin = thinRoute(d.coordinates.map(c => L.latLng(c[0], c[1])));
+          routeCache.set(key, thin);
+          return thin;
+        }
+      } catch(e) { console.warn("Route fail:", key, e); }
+      const fb = [L.latLng(origin.lat, origin.lng), L.latLng(hospital.lat, hospital.lng)];
+      routeCache.set(key, fb);
+      return fb;
+    }
+
+    async function preloadRoutes(sim) {
+      const loadEl = document.getElementById("sol-loading");
+      loadEl.classList.remove("hidden");
+      routesReady = false;
+      const jobs = [];
+      for (const o of sim.origins) for (const h of sim.hospitals) jobs.push(fetchRoute(o, h));
+      await Promise.all(jobs);
+      loadEl.classList.add("hidden");
+      routesReady = true;
+    }
+
+    /* ── Helpers ── */
+    function pick(arr, wk) {
+      let r = Math.random(), t = 0;
+      for (const x of arr) { t += x[wk]; if (r <= t) return x; }
+      return arr[0];
+    }
+    function rand(a, b) { return a + Math.random() * (b - a); }
+
+    /* ── Spawn + Move ── */
+    function spawn(sim) {
+      if (!routesReady) return;
+      const origin = pick(sim.origins, "weight");
+      const hospital = pick(sim.hospitals, "capacity_share");
+      const kind = Math.random() < sim.ambulance_share ? "ambulance" : "car";
+      const s = STYLE[kind];
+      
+      let fill = s.fill, border = s.border;
+      // Make redirected non-urgent patients green
+      if (allSolutions[activeSolIdx].id === "patient_redirection" && kind === "car" && hospital.id !== "central_ed") {
+        fill = "#22c55e";
+        border = "#166534";
+      }
+
+      const key = `${origin.lat},${origin.lng}->${hospital.lat},${hospital.lng}`;
+      const route = routeCache.get(key);
+      if (!route || route.length < 2) return;
+      const maxOff = Math.max(1, Math.floor(route.length * 0.2));
+      const si = Math.floor(Math.random() * maxOff);
+      const marker = L.circleMarker(route[si], {
+        radius: s.r, color: border, fillColor: fill,
+        fillOpacity: 0.95, weight: s.w, renderer, pane: "dots"
+      }).addTo(map);
+      dots.push({ kind, marker, cur: route[si], route, seg: si + 1, speed: rand(s.kmh[0], s.kmh[1]) / 3.6 });
+    }
+
+    function moveDot(dot, dt) {
+      let budget = dot.speed * SIM_SPEED * (dt / 1000);
+      while (budget > 0) {
+        const tgt = dot.route[dot.seg];
+        if (!tgt) { map.removeLayer(dot.marker); return false; }
+        const dist = dot.cur.distanceTo(tgt);
+        if (dist <= budget) {
+          budget -= dist; dot.cur = tgt; dot.seg++;
+          if (dot.seg >= dot.route.length) { map.removeLayer(dot.marker); return false; }
+        } else {
+          const f = budget / dist;
+          dot.cur = L.latLng(dot.cur.lat + (tgt.lat - dot.cur.lat) * f, dot.cur.lng + (tgt.lng - dot.cur.lng) * f);
+          budget = 0;
+        }
+      }
+      dot.marker.setLatLng(dot.cur);
+      return true;
+    }
+
+    /* ── Loop ── */
+    function loop(ts) {
+      if (!running) return;
+      if (!lastFrame) lastFrame = ts;
+      const dt = Math.min(40, ts - lastFrame || 16);
+      lastFrame = ts;
+      const sim = allSolutions[activeSolIdx].simulation;
+      spawnAcc += sim.dot_spawn_rate * (dt / 1000);
+      while (spawnAcc >= 1) { spawn(sim); spawnAcc -= 1; }
+      dots = dots.filter(d => moveDot(d, dt));
+      document.getElementById("sol-vehicles").textContent = dots.length;
+      rafId = requestAnimationFrame(loop);
+    }
+
+    function resetSim() {
+      running = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      dots.forEach(d => { if (map.hasLayer(d.marker)) map.removeLayer(d.marker); });
+      dots = []; spawnAcc = 0; lastFrame = null;
+      document.getElementById("sol-vehicles").textContent = "0";
+    }
+
+    /* ── UI ── */
+    function selectSolution(idx) {
+      activeSolIdx = idx;
+      const sol = allSolutions[idx];
+      document.getElementById("sol-name").textContent = `${sol.icon}  ${sol.name}`;
+      document.getElementById("sol-desc").textContent = sol.description;
+      document.getElementById("sol-diagram-container").innerHTML = sol.diagram_html;
+      document.getElementById("sol-effect").textContent = sol.effect;
+      document.getElementById("sol-spawn").textContent = `${sol.simulation.dot_spawn_rate} / sec`;
+      document.getElementById("sol-facilities").textContent = sol.simulation.hospitals.length;
+
+      document.querySelectorAll(".flow-card").forEach((c, i) => {
+        c.classList.toggle("active", i === idx);
+      });
+
+      const legRedirected = document.getElementById("legend-redirected");
+      if (sol.id === "patient_redirection") legRedirected.classList.remove("hidden");
+      else legRedirected.classList.add("hidden");
+
+      resetSim();
+      drawMarkers(sol.simulation);
+      preloadRoutes(sol.simulation);
+    }
+
+    document.querySelectorAll(".flow-card").forEach(card => {
+      card.addEventListener("click", () => selectSolution(parseInt(card.dataset.solIndex)));
+    });
+    document.getElementById("run-sol").addEventListener("click", () => {
+      if (running) return;
+      if (!routesReady) return;
+      running = true; lastFrame = null;
+      rafId = requestAnimationFrame(loop);
+    });
+    document.getElementById("reset-sol").addEventListener("click", resetSim);
+
+    selectSolution(0);
+  })();
+  </script>
+</body>
+</html>

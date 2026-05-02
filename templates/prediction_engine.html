@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Synapse | Prediction</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <nav class="app-nav">
+        <a class="nav-link" href="{{ url_for('home', scenario=scenario) }}">Snapshot</a>
+        <a class="nav-link" href="{{ url_for('behavior_engine', scenario=scenario) }}">Behavior</a>
+        <a class="nav-link active" href="{{ url_for('prediction_engine', scenario=scenario) }}">Prediction</a>
+        <a class="nav-link" href="{{ url_for('solutions_page', scenario=scenario) }}">Solutions</a>
+      </nav>
+      <p class="eyebrow">Synapse</p>
+      <h1>Brampton Simulation</h1>
+      <p class="subtitle">{{ snapshot.scenario }} simulation across Brampton.</p>
+    </section>
+
+    <section class="scenario-strip">
+      <a class="scenario-button{% if scenario == 'low' %} active{% endif %}" href="{{ url_for('prediction_engine', scenario='low') }}">Low</a>
+      <a class="scenario-button{% if scenario == 'normal' %} active{% endif %}" href="{{ url_for('prediction_engine', scenario='normal') }}">Normal</a>
+      <a class="scenario-button{% if scenario == 'condition_x' %} active{% endif %}" href="{{ url_for('prediction_engine', scenario='condition_x') }}">Condition X Crisis</a>
+    </section>
+
+    <section class="stats">
+      <article class="stat-card">
+        <div class="stat-label">Adjusted Demand</div>
+        <div class="stat-value">{{ prediction.adjusted_demand }}</div>
+        <div class="stat-unit">patients per hour</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Projected Wait</div>
+        <div class="stat-value">{{ prediction.projected_wait }}</div>
+        <div class="stat-unit">hours</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Overload Risk</div>
+        <div class="stat-value">{{ prediction.overload_risk }}</div>
+        <div class="stat-unit">0 to 1 scale</div>
+      </article>
+    </section>
+
+    <section class="simulation-toolbar">
+      <button id="start-sim" class="primary-button">Start Simulation</button>
+      <button id="reset-sim" class="secondary-button">Reset</button>
+      <div class="mode-switches">
+        <button class="mode-button active" data-mode="all">All</button>
+        <button class="mode-button" data-mode="ambulance">Ambulances</button>
+        <button class="mode-button" data-mode="car">Cars</button>
+      </div>
+    </section>
+
+    <section class="window-strip">
+      {% for window in prediction.simulation.time_windows %}
+      <button class="window-button{% if loop.first %} active{% endif %}" data-window-id="{{ window.id }}">
+        <span>{{ window.label }}</span>
+        <strong>{{ window.time_range }}</strong>
+      </button>
+      {% endfor %}
+    </section>
+
+    <section class="simulation-grid">
+      <article class="map-panel">
+        <div class="map-header">
+          <div>
+            <p class="section-label">Map Feed</p>
+            <h2>Live vehicle movement across Brampton</h2>
+          </div>
+          <div class="sim-readout-group">
+            <div id="sim-clock" class="sim-date"></div>
+            <div id="sim-readout" class="sim-readout">Waiting to start</div>
+          </div>
+        </div>
+        <div class="map-stage">
+          <div id="brampton-map"></div>
+          <div id="route-loading" class="route-loading">
+            <div class="spinner"></div>
+            <span>Loading road geometry…</span>
+          </div>
+          <div id="map-legend" class="map-legend">
+            <span><i class="legend-dot ambulance-dot"></i>Ambulances</span>
+            <span><i class="legend-dot car-dot"></i>Cars</span>
+          </div>
+          <div id="crisis-banner" class="crisis-banner hidden">
+            <strong>Crisis detected</strong>
+            <span id="crisis-text">Demand is exceeding safe flow.</span>
+            <a href="{{ url_for('solutions_page', scenario=scenario) }}" class="primary-button" id="action-button">View Solutions</a>
+          </div>
+        </div>
+      </article>
+      <aside class="sim-side">
+        <section class="panel">
+          <p class="section-label">Live Status</p>
+          <h2 id="live-status">{{ prediction.status }}</h2>
+          <p class="panel-text" id="live-horizon">{{ prediction.horizon }}</p>
+        </section>
+        <section class="panel">
+          <p class="section-label">Active Vehicles</p>
+          <h2 id="active-count">0</h2>
+          <div class="vehicle-counter">
+            <div class="counter-item"><span class="counter-dot ambulance"></span><span id="ambulance-count">0</span> ambulances</div>
+            <div class="counter-item"><span class="counter-dot car"></span><span id="car-count">0</span> cars</div>
+          </div>
+        </section>
+        <section class="panel">
+          <p class="section-label">Window Forecast</p>
+          <h2 id="window-demand">{{ prediction.simulation.time_windows[0].forecast_demand }}</h2>
+          <p class="panel-text" id="window-status">{{ prediction.simulation.time_windows[0].status }} load for this hour.</p>
+        </section>
+        <section class="panel">
+          <p class="section-label">Recommended Action</p>
+          <h2>{{ prediction.actions[0].name }}</h2>
+          <p class="panel-text">{{ prediction.actions[0].reason }}</p>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script id="sim-data" type="application/json">{{ prediction.simulation | tojson }}</script>
+  <script id="prediction-data" type="application/json">{{ prediction | tojson }}</script>
+  <script>
+  (function() {
+    "use strict";
+    const simData    = JSON.parse(document.getElementById("sim-data").textContent);
+    const prediction = JSON.parse(document.getElementById("prediction-data").textContent);
+
+    const $ = id => document.getElementById(id);
+    const startBtn = $("start-sim"), resetBtn = $("reset-sim");
+    const crisisBanner = $("crisis-banner"), crisisText = $("crisis-text"), actionBtn = $("action-button");
+    const activeCountEl = $("active-count"), ambCountEl = $("ambulance-count"), carCountEl = $("car-count");
+    const simReadout = $("sim-readout"), simClockEl = $("sim-clock");
+    const liveStatus = $("live-status"), liveHorizon = $("live-horizon");
+    const windowDemand = $("window-demand"), windowStatusEl = $("window-status");
+    const loadingEl = $("route-loading");
+    const modeButtons = document.querySelectorAll(".mode-button");
+    const windowButtons = document.querySelectorAll(".window-button");
+
+    let running = false, rafId = null, dots = [], activeMode = "all";
+    let spawnAcc = 0, appliedAction = false, lastFrame = null, routesReady = false;
+    let currentWindow = simData.time_windows[0];
+
+    /* ── Simulation clock ──
+       Starts at May 2 2030, 08:00 AM and advances 1 sim-minute per real second */
+    const SIM_EPOCH = new Date(2030, 4, 2, 8, 0, 0);  // May 2 2030 08:00
+    const SIM_MINUTES_PER_REAL_SEC = 1;
+    let simElapsedMs = 0;  // real ms since simulation started
+
+    function getSimTime() {
+      const simMinutes = (simElapsedMs / 1000) * SIM_MINUTES_PER_REAL_SEC;
+      return new Date(SIM_EPOCH.getTime() + simMinutes * 60000);
+    }
+
+    function formatSimClock() {
+      const t = getSimTime();
+      const opts = { year: "numeric", month: "long", day: "numeric" };
+      const date = t.toLocaleDateString("en-CA", opts);
+      const h = t.getHours(), m = t.getMinutes(), s = t.getSeconds();
+      const ampm = h >= 12 ? "PM" : "AM";
+      const h12 = h % 12 || 12;
+      const time = `${h12}:${String(m).padStart(2,"0")}:${String(s).padStart(2,"0")} ${ampm}`;
+      return `${date}  •  ${time}`;
+    }
+
+    const SIM_SPEED = 80;
+    const ROUTE_THIN = 4;
+
+    const STYLE = {
+      ambulance: { fill: "#3b82f6", border: "#fff",   r: 7,   w: 2.5, kmh: [70, 110] },
+      car:       { fill: "#cbd5e1", border: "#64748b", r: 3.5, w: 0.5, kmh: [35, 60] },
+    };
+
+    /* ── Map ── */
+    const map = L.map("brampton-map", {
+      zoomControl: false, attributionControl: false, dragging: true,
+      scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false,
+      keyboard: false, touchZoom: true,
+    }).setView([simData.map_center.lat, simData.map_center.lng], simData.map_zoom);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 18 }).addTo(map);
+    const renderer = L.canvas({ padding: 0.5 });
+    map.createPane("dots").style.zIndex = 470;
+
+    simData.hospitals.forEach(h => {
+      L.circleMarker([h.lat, h.lng], {
+        radius: 11, color: "#6366f1", fillColor: "#6366f1", fillOpacity: 1, weight: 3,
+        renderer, pane: "dots"
+      }).addTo(map).bindTooltip(h.name, { direction: "top", offset: [0, -12] });
+    });
+    simData.origins.forEach(o => {
+      L.circleMarker([o.lat, o.lng], {
+        radius: 5, color: "#6b6b82", fillColor: "#6b6b82", fillOpacity: 0.9, weight: 1,
+        renderer, pane: "dots"
+      }).addTo(map).bindTooltip(o.name, { direction: "top", offset: [0, -8] });
+    });
+
+    /* ── Route fetching ── */
+    const routeCache = new Map();
+
+    function thinRoute(pts) {
+      if (pts.length <= 3) return pts;
+      const out = [pts[0]];
+      for (let i = ROUTE_THIN; i < pts.length - 1; i += ROUTE_THIN) out.push(pts[i]);
+      out.push(pts[pts.length - 1]);
+      return out;
+    }
+
+    async function fetchRoute(origin, hospital) {
+      const key = `${origin.name}->${hospital.name}`;
+      if (routeCache.has(key)) return routeCache.get(key);
+      try {
+        const r = await fetch(`/api/route?origin_lat=${origin.lat}&origin_lng=${origin.lng}&dest_lat=${hospital.lat}&dest_lng=${hospital.lng}`);
+        if (!r.ok) throw new Error(r.status);
+        const d = await r.json();
+        if (d.coordinates && d.coordinates.length > 1) {
+          const thin = thinRoute(d.coordinates.map(c => L.latLng(c[0], c[1])));
+          routeCache.set(key, thin);
+          return thin;
+        }
+      } catch (e) { console.warn("Route fail:", key, e); }
+      const fb = [L.latLng(origin.lat, origin.lng), L.latLng(hospital.lat, hospital.lng)];
+      routeCache.set(key, fb);
+      return fb;
+    }
+
+    async function preload() {
+      loadingEl.classList.remove("hidden");
+      const jobs = [];
+      for (const o of simData.origins) for (const h of simData.hospitals) jobs.push(fetchRoute(o, h));
+      await Promise.all(jobs);
+      loadingEl.classList.add("hidden");
+      routesReady = true;
+    }
+    preload();
+
+    /* ── Helpers ── */
+    function pick(arr, wk) {
+      let r = Math.random(), t = 0;
+      for (const x of arr) { t += x[wk]; if (r <= t) return x; }
+      return arr[0];
+    }
+    function rand(a, b) { return a + Math.random() * (b - a); }
+
+    /* ── Spawn ── */
+    function spawn() {
+      if (!routesReady) return;
+      const origin   = pick(simData.origins, "weight");
+      const hospital = pick(simData.hospitals, "capacity_share");
+      const kind     = Math.random() < simData.ambulance_share ? "ambulance" : "car";
+      const s        = STYLE[kind];
+      const key      = `${origin.name}->${hospital.name}`;
+      const route    = routeCache.get(key);
+      if (!route || route.length < 2) return;
+
+      const maxOff  = Math.max(1, Math.floor(route.length * 0.2));
+      const startIdx = Math.floor(Math.random() * maxOff);
+      const marker = L.circleMarker(route[startIdx], {
+        radius: s.r, color: s.border, fillColor: s.fill,
+        fillOpacity: 0.95, weight: s.w, renderer, pane: "dots"
+      }).addTo(map);
+
+      dots.push({
+        kind, marker, cur: route[startIdx], route, seg: startIdx + 1,
+        speed: rand(s.kmh[0], s.kmh[1]) / 3.6
+      });
+    }
+
+    /* ── Move ── */
+    function moveDot(dot, dt) {
+      let budget = dot.speed * SIM_SPEED * (dt / 1000);
+      while (budget > 0) {
+        const tgt = dot.route[dot.seg];
+        if (!tgt) { map.removeLayer(dot.marker); return false; }
+        const dist = dot.cur.distanceTo(tgt);
+        if (dist <= budget) {
+          budget -= dist; dot.cur = tgt; dot.seg++;
+          if (dot.seg >= dot.route.length) { map.removeLayer(dot.marker); return false; }
+        } else {
+          const f = budget / dist;
+          dot.cur = L.latLng(dot.cur.lat + (tgt.lat - dot.cur.lat) * f, dot.cur.lng + (tgt.lng - dot.cur.lng) * f);
+          budget = 0;
+        }
+      }
+      dot.marker.setLatLng(dot.cur);
+      const vis = activeMode === "all" || activeMode === dot.kind;
+      dot.marker.setStyle({ opacity: vis ? 1 : 0, fillOpacity: vis ? 0.95 : 0 });
+      return true;
+    }
+
+    /* ── Display ── */
+    function updateWindowDisplay() {
+      windowDemand.textContent = currentWindow.forecast_demand;
+      windowStatusEl.textContent = `${currentWindow.status} load. Pressure ${currentWindow.pressure}.`;
+      if (!running) {
+        simClockEl.textContent = "May 2, 2030 • 08:00:00 AM";
+        simReadout.textContent = "Waiting to start";
+      }
+    }
+    function setWindow(id) {
+      currentWindow = simData.time_windows.find(w => w.id === id) || simData.time_windows[0];
+      windowButtons.forEach(b => b.classList.toggle("active", b.dataset.windowId === currentWindow.id));
+      updateWindowDisplay(); updateStatus();
+    }
+    function updateStatus() {
+      const amb = dots.filter(d => d.kind === "ambulance").length;
+      const car = dots.filter(d => d.kind === "car").length;
+      const vis = activeMode === "all" ? dots.length : (activeMode === "ambulance" ? amb : car);
+      activeCountEl.textContent = vis;
+      ambCountEl.textContent = amb;
+      carCountEl.textContent = car;
+      simReadout.textContent = running ? `${vis} vehicles in ${simData.city}` : "Waiting to start";
+
+      if (running) simClockEl.textContent = formatSimClock();
+
+      const crisis = currentWindow.forecast_demand + dots.length * 2.4;
+      if (!appliedAction && crisis >= simData.crisis_threshold) {
+        crisisBanner.classList.remove("hidden");
+        crisisText.textContent = `${prediction.actions[0].name} recommended. Flow exceeding safe limits.`;
+        liveStatus.textContent = "Critical";
+        liveHorizon.textContent = `Action required — ${formatSimClock()}`;
+      } else if (appliedAction) {
+        crisisBanner.classList.remove("hidden");
+        liveStatus.textContent = "Recovering";
+        liveHorizon.textContent = `Top action applied for ${currentWindow.time_range}`;
+      } else {
+        crisisBanner.classList.add("hidden");
+        liveStatus.textContent = currentWindow.status;
+        liveHorizon.textContent = `${currentWindow.time_range}`;
+      }
+    }
+
+    /* ── Main loop ── */
+    function loop(ts) {
+      if (!running) return;
+      if (!lastFrame) lastFrame = ts;
+      const dt = Math.min(40, ts - lastFrame || 16);
+      lastFrame = ts;
+      simElapsedMs += dt;
+
+      const rate = simData.dot_spawn_rate * currentWindow.spawn_multiplier;
+      spawnAcc += rate * (dt / 1000);
+      while (spawnAcc >= 1) { spawn(); spawnAcc -= 1; }
+
+      dots = dots.filter(d => moveDot(d, dt));
+      updateStatus();
+      rafId = requestAnimationFrame(loop);
+    }
+
+    /* ── Controls ── */
+    function start() {
+      if (running) return;
+      if (!routesReady) { simReadout.textContent = "Loading routes…"; return; }
+      running = true; lastFrame = null; updateWindowDisplay();
+      rafId = requestAnimationFrame(loop);
+    }
+    function reset() {
+      running = false; if (rafId) cancelAnimationFrame(rafId);
+      dots.forEach(d => { if (map.hasLayer(d.marker)) map.removeLayer(d.marker); });
+      dots = []; spawnAcc = 0; appliedAction = false; lastFrame = null; simElapsedMs = 0;
+      crisisBanner.classList.add("hidden");
+      activeCountEl.textContent = "0"; ambCountEl.textContent = "0"; carCountEl.textContent = "0";
+      liveStatus.textContent = prediction.status; liveHorizon.textContent = prediction.horizon;
+      updateWindowDisplay();
+    }
+    function applyAction() {
+      appliedAction = true;
+      simData.dot_spawn_rate = Math.max(0.7, simData.dot_spawn_rate * 0.5);
+      crisisText.textContent = `${prediction.actions[0].name} applied. Flow slowing.`;
+      updateStatus();
+    }
+
+    modeButtons.forEach(b => b.addEventListener("click", () => {
+      modeButtons.forEach(x => x.classList.remove("active")); b.classList.add("active");
+      activeMode = b.dataset.mode; updateStatus();
+    }));
+    windowButtons.forEach(b => b.addEventListener("click", () => setWindow(b.dataset.windowId)));
+    startBtn.addEventListener("click", start);
+    resetBtn.addEventListener("click", reset);
+    actionBtn.addEventListener("click", applyAction);
+    setWindow(simData.time_windows[0].id);
+  })();
+  </script>
+</body>
+</html>

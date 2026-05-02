@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Synapse | Behavior</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <nav class="app-nav">
+        <a class="nav-link" href="{{ url_for('home', scenario=scenario) }}">Snapshot</a>
+        <a class="nav-link active" href="{{ url_for('behavior_engine', scenario=scenario) }}">Behavior</a>
+        <a class="nav-link" href="{{ url_for('prediction_engine', scenario=scenario) }}">Prediction</a>
+        <a class="nav-link" href="{{ url_for('solutions_page', scenario=scenario) }}">Solutions</a>
+      </nav>
+      <p class="eyebrow">Synapse</p>
+      <h1>Behavior Engine</h1>
+      <p class="subtitle">{{ snapshot.scenario }} behavior profile.</p>
+    </section>
+
+    <section class="scenario-strip">
+      <a class="scenario-button{% if scenario == 'low' %} active{% endif %}" href="{{ url_for('behavior_engine', scenario='low') }}">Low</a>
+      <a class="scenario-button{% if scenario == 'normal' %} active{% endif %}" href="{{ url_for('behavior_engine', scenario='normal') }}">Normal</a>
+      <a class="scenario-button{% if scenario == 'condition_x' %} active{% endif %}" href="{{ url_for('behavior_engine', scenario='condition_x') }}">Condition X Crisis</a>
+    </section>
+
+    <section class="stats">
+      <article class="stat-card">
+        <div class="stat-label">Proximity Bias</div>
+        <div class="stat-value">{{ behavior.proximity_bias }}</div>
+        <div class="stat-unit">relative score</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Wait-Time Neglect</div>
+        <div class="stat-value">{{ behavior.wait_time_neglect }}</div>
+        <div class="stat-unit">relative score</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Panic Surge</div>
+        <div class="stat-value">{{ behavior.panic_surge }}</div>
+        <div class="stat-unit">relative score</div>
+      </article>
+    </section>
+
+    <section class="dashboard-grid">
+      <article class="panel">
+        <h2>Proximity</h2>
+        <p class="panel-text">{{ behavior.explanation[0] }}</p>
+      </article>
+      <article class="panel">
+        <h2>Wait Time</h2>
+        <p class="panel-text">{{ behavior.explanation[1] }}</p>
+      </article>
+      <article class="panel">
+        <h2>Panic</h2>
+        <p class="panel-text">{{ behavior.explanation[2] }}</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
