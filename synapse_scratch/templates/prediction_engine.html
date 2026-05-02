@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Synapse | Prediction</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  >
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <nav class="app-nav">
+        <a class="nav-link" href="{{ url_for('home', scenario=scenario) }}">Snapshot</a>
+        <a class="nav-link" href="{{ url_for('behavior_engine', scenario=scenario) }}">Behavior</a>
+        <a class="nav-link active" href="{{ url_for('prediction_engine', scenario=scenario) }}">Prediction</a>
+      </nav>
+      <p class="eyebrow">Synapse</p>
+      <h1>Brampton Simulation</h1>
+      <p class="subtitle">{{ snapshot.scenario }} simulation across Brampton.</p>
+    </section>
+
+    <section class="scenario-strip">
+      <a class="scenario-button{% if scenario == 'low' %} active{% endif %}" href="{{ url_for('prediction_engine', scenario='low') }}">Low</a>
+      <a class="scenario-button{% if scenario == 'normal' %} active{% endif %}" href="{{ url_for('prediction_engine', scenario='normal') }}">Normal</a>
+      <a class="scenario-button{% if scenario == 'condition_x' %} active{% endif %}" href="{{ url_for('prediction_engine', scenario='condition_x') }}">Condition X Crisis</a>
+    </section>
+
+    <section class="stats">
+      <article class="stat-card">
+        <div class="stat-label">Adjusted Demand</div>
+        <div class="stat-value">{{ prediction.adjusted_demand }}</div>
+        <div class="stat-unit">patients per hour</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Projected Wait</div>
+        <div class="stat-value">{{ prediction.projected_wait }}</div>
+        <div class="stat-unit">hours</div>
+      </article>
+      <article class="stat-card">
+        <div class="stat-label">Overload Risk</div>
+        <div class="stat-value">{{ prediction.overload_risk }}</div>
+        <div class="stat-unit">0 to 1 scale</div>
+      </article>
+    </section>
+
+    <section class="simulation-toolbar">
+      <button id="start-sim" class="primary-button">Start Simulation</button>
+      <button id="reset-sim" class="secondary-button">Reset</button>
+      <div class="mode-switches">
+        <button class="mode-button active" data-mode="all">All</button>
+        <button class="mode-button" data-mode="people">Foot Traffic</button>
+        <button class="mode-button" data-mode="ambulance">Ambulances</button>
+        <button class="mode-button" data-mode="car">Cars</button>
+      </div>
+    </section>
+
+    <section class="window-strip">
+      {% for window in prediction.simulation.time_windows %}
+      <button
+        class="window-button{% if loop.first %} active{% endif %}"
+        data-window-id="{{ window.id }}"
+      >
+        <span>{{ window.label }}</span>
+        <strong>{{ window.time_range }}</strong>
+      </button>
+      {% endfor %}
+    </section>
+
+    <section class="simulation-grid">
+      <article class="map-panel">
+        <div class="map-header">
+          <div>
+            <p class="section-label">Map Feed</p>
+            <h2>Sample movement across Brampton</h2>
+          </div>
+          <div class="sim-readout-group">
+            <div id="sim-date" class="sim-date"></div>
+            <div id="sim-readout" class="sim-readout">Waiting to start</div>
+          </div>
+        </div>
+        <div class="map-stage">
+          <div id="brampton-map"></div>
+          <div id="map-legend" class="map-legend">
+            <span><i class="legend-dot people-dot"></i>Foot traffic</span>
+            <span><i class="legend-dot ambulance-dot"></i>Ambulances</span>
+            <span><i class="legend-dot car-dot"></i>Cars</span>
+          </div>
+          <div id="crisis-banner" class="crisis-banner hidden">
+            <strong>Crisis detected</strong>
+            <span id="crisis-text">Demand is exceeding safe flow.</span>
+            <button id="action-button" class="primary-button">Apply top action</button>
+          </div>
+        </div>
+      </article>
+
+      <aside class="sim-side">
+        <section class="panel">
+          <p class="section-label">Live Status</p>
+          <h2 id="live-status">{{ prediction.status }}</h2>
+          <p class="panel-text" id="live-horizon">{{ prediction.horizon }}</p>
+        </section>
+
+        <section class="panel">
+          <p class="section-label">Current Feed</p>
+          <h2 id="active-count">0</h2>
+          <p class="panel-text">Visible moving dots in the selected time window.</p>
+        </section>
+
+        <section class="panel">
+          <p class="section-label">Window Forecast</p>
+          <h2 id="window-demand">{{ prediction.simulation.time_windows[0].forecast_demand }}</h2>
+          <p class="panel-text" id="window-status">{{ prediction.simulation.time_windows[0].status }} load for this hour.</p>
+        </section>
+
+        <section class="panel">
+          <p class="section-label">Recommended Action</p>
+          <h2>{{ prediction.actions[0].name }}</h2>
+          <p class="panel-text">{{ prediction.actions[0].reason }}</p>
+        </section>
+      </aside>
+    </section>
+  </main>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script id="sim-data" type="application/json">{{ prediction.simulation | tojson }}</script>
+  <script id="prediction-data" type="application/json">{{ prediction | tojson }}</script>
+  <script>
+    const simData = JSON.parse(document.getElementById("sim-data").textContent);
+    const prediction = JSON.parse(document.getElementById("prediction-data").textContent);
+
+    const startButton = document.getElementById("start-sim");
+    const resetButton = document.getElementById("reset-sim");
+    const crisisBanner = document.getElementById("crisis-banner");
+    const crisisText = document.getElementById("crisis-text");
+    const actionButton = document.getElementById("action-button");
+    const activeCount = document.getElementById("active-count");
+    const simReadout = document.getElementById("sim-readout");
+    const simDate = document.getElementById("sim-date");
+    const liveStatus = document.getElementById("live-status");
+    const liveHorizon = document.getElementById("live-horizon");
+    const windowDemand = document.getElementById("window-demand");
+    const windowStatus = document.getElementById("window-status");
+    const modeButtons = document.querySelectorAll(".mode-button");
+    const windowButtons = document.querySelectorAll(".window-button");
+
+    let running = false;
+    let rafId = null;
+    let dots = [];
+    let activeMode = "all";
+    let spawnAccumulator = 0;
+    let appliedAction = false;
+    let lastFrame = null;
+    let currentWindow = simData.time_windows[0];
+
+    const VEHICLE_STYLE = {
+      people: { color: "#d61f2c", radius: 3.5, speed: 6, stopMin: 1400, stopMax: 3200 },
+      ambulance: { color: "#1d4ed8", radius: 4.5, speed: 20, stopMin: 300, stopMax: 900 },
+      car: { color: "#111111", radius: 3.5, speed: 14, stopMin: 700, stopMax: 1800 },
+    };
+
+    const SIGNALS = [
+      [43.7047, -79.8139],
+      [43.7186, -79.8008],
+      [43.7312, -79.7976],
+      [43.7255, -79.7309],
+      [43.6865, -79.7613],
+      [43.6765, -79.8062],
+      [43.6677, -79.7936],
+      [43.7578, -79.7461],
+      [43.7452, -79.7748],
+    ];
+
+    const ROUTE_CATALOG = {
+      "Mount Pleasant": {
+        "Central ED": [
+          [43.7041, -79.8316], [43.7047, -79.8232], [43.7047, -79.8139], [43.7126, -79.8077],
+          [43.7186, -79.8008], [43.7249, -79.7989], [43.7312, -79.7976], [43.7315, -79.7864],
+          [43.7317, -79.7743], [43.7317, -79.7624]
+        ],
+        "North Urgent Site": [
+          [43.7041, -79.8316], [43.7047, -79.8232], [43.7047, -79.8139], [43.7126, -79.8077],
+          [43.7186, -79.8008], [43.7312, -79.7976], [43.7396, -79.7895], [43.7452, -79.7748],
+          [43.7528, -79.7582], [43.7578, -79.7461], [43.7654, -79.7374], [43.7736, -79.7301]
+        ],
+        "West Pop-up Clinic": [
+          [43.7041, -79.8316], [43.6988, -79.8251], [43.6926, -79.8193], [43.6846, -79.8134],
+          [43.6765, -79.8062], [43.6720, -79.8111], [43.6691, -79.8156], [43.6668, -79.8187]
+        ]
+      },
+      "Downtown Brampton": {
+        "Central ED": [
+          [43.6865, -79.7613], [43.6932, -79.7616], [43.7006, -79.7618], [43.7089, -79.7620],
+          [43.7184, -79.7622], [43.7252, -79.7623], [43.7317, -79.7624]
+        ],
+        "North Urgent Site": [
+          [43.6865, -79.7613], [43.6986, -79.7619], [43.7107, -79.7621], [43.7218, -79.7622],
+          [43.7317, -79.7624], [43.7452, -79.7748], [43.7528, -79.7582], [43.7578, -79.7461],
+          [43.7654, -79.7374], [43.7736, -79.7301]
+        ],
+        "West Pop-up Clinic": [
+          [43.6865, -79.7613], [43.6827, -79.7715], [43.6788, -79.7829], [43.6765, -79.7901],
+          [43.6765, -79.8062], [43.6720, -79.8111], [43.6691, -79.8156], [43.6668, -79.8187]
+        ]
+      },
+      "Bramalea": {
+        "Central ED": [
+          [43.7153, -79.7215], [43.7209, -79.7267], [43.7255, -79.7309], [43.7284, -79.7398],
+          [43.7304, -79.7488], [43.7317, -79.7624]
+        ],
+        "North Urgent Site": [
+          [43.7153, -79.7215], [43.7255, -79.7309], [43.7364, -79.7360], [43.7464, -79.7415],
+          [43.7578, -79.7461], [43.7654, -79.7374], [43.7736, -79.7301]
+        ],
+        "West Pop-up Clinic": [
+          [43.7153, -79.7215], [43.7047, -79.7251], [43.6911, -79.7322], [43.6786, -79.7405],
+          [43.6717, -79.7480], [43.6677, -79.7936], [43.6691, -79.8088], [43.6668, -79.8187]
+        ]
+      },
+      "Springdale": {
+        "Central ED": [
+          [43.7577, -79.7362], [43.7525, -79.7410], [43.7455, -79.7460], [43.7397, -79.7528],
+          [43.7347, -79.7583], [43.7317, -79.7624]
+        ],
+        "North Urgent Site": [
+          [43.7577, -79.7362], [43.7641, -79.7338], [43.7687, -79.7318], [43.7736, -79.7301]
+        ],
+        "West Pop-up Clinic": [
+          [43.7577, -79.7362], [43.7488, -79.7406], [43.7388, -79.7457], [43.7255, -79.7309],
+          [43.7068, -79.7394], [43.6868, -79.7496], [43.6765, -79.7615], [43.6677, -79.7936],
+          [43.6668, -79.8187]
+        ]
+      },
+      "Heart Lake": {
+        "Central ED": [
+          [43.7452, -79.7748], [43.7418, -79.7720], [43.7374, -79.7682], [43.7342, -79.7654], [43.7317, -79.7624]
+        ],
+        "North Urgent Site": [
+          [43.7452, -79.7748], [43.7498, -79.7674], [43.7542, -79.7586], [43.7578, -79.7461],
+          [43.7654, -79.7374], [43.7736, -79.7301]
+        ],
+        "West Pop-up Clinic": [
+          [43.7452, -79.7748], [43.7312, -79.7976], [43.7186, -79.8008], [43.7011, -79.8031],
+          [43.6888, -79.8047], [43.6765, -79.8062], [43.6691, -79.8156], [43.6668, -79.8187]
+        ]
+      },
+      "Creditview": {
+        "Central ED": [
+          [43.6495, -79.8078], [43.6581, -79.8017], [43.6677, -79.7936], [43.6763, -79.7830],
+          [43.6865, -79.7613], [43.7006, -79.7618], [43.7184, -79.7622], [43.7317, -79.7624]
+        ],
+        "North Urgent Site": [
+          [43.6495, -79.8078], [43.6581, -79.8017], [43.6677, -79.7936], [43.6763, -79.7830],
+          [43.6865, -79.7613], [43.7006, -79.7618], [43.7184, -79.7622], [43.7317, -79.7624],
+          [43.7452, -79.7748], [43.7578, -79.7461], [43.7736, -79.7301]
+        ],
+        "West Pop-up Clinic": [
+          [43.6495, -79.8078], [43.6548, -79.8106], [43.6602, -79.8141], [43.6640, -79.8170], [43.6668, -79.8187]
+        ]
+      }
+    };
+
+    const map = L.map("brampton-map", {
+      zoomControl: false,
+      attributionControl: false,
+      dragging: true,
+      scrollWheelZoom: false,
+      doubleClickZoom: false,
+      boxZoom: false,
+      keyboard: false,
+      touchZoom: true,
+    }).setView([simData.map_center.lat, simData.map_center.lng], simData.map_zoom);
+
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 18,
+    }).addTo(map);
+
+    const canvasRenderer = L.canvas({ padding: 0.5 });
+    map.createPane("dots");
+    map.getPane("dots").style.zIndex = 470;
+    const originMarkers = [];
+    const hospitalMarkers = [];
+
+    simData.hospitals.forEach((hospital) => {
+      const marker = L.circleMarker([hospital.lat, hospital.lng], {
+        radius: 9,
+        color: "#111111",
+        fillColor: "#111111",
+        fillOpacity: 1,
+        weight: 1,
+        renderer: canvasRenderer,
+        pane: "dots",
+      }).addTo(map);
+      marker.bindTooltip(hospital.name, { direction: "top", offset: [0, -10] });
+      hospitalMarkers.push(marker);
+    });
+
+    simData.origins.forEach((origin) => {
+      const marker = L.circleMarker([origin.lat, origin.lng], {
+        radius: 5,
+        color: "#6b7280",
+        fillColor: "#6b7280",
+        fillOpacity: 0.9,
+        weight: 1,
+        renderer: canvasRenderer,
+        pane: "dots",
+      }).addTo(map);
+      marker.bindTooltip(origin.name, { direction: "top", offset: [0, -8] });
+      originMarkers.push(marker);
+    });
+
+    SIGNALS.forEach(([lat, lng]) => {
+      L.circleMarker([lat, lng], {
+        radius: 2.5,
+        color: "#eab308",
+        fillColor: "#eab308",
+        fillOpacity: 1,
+        weight: 0,
+        renderer: canvasRenderer,
+        pane: "dots",
+      }).addTo(map);
+    });
+
+    function weightedOrigin() {
+      const roll = Math.random();
+      let total = 0;
+      for (const origin of simData.origins) {
+        total += origin.weight;
+        if (roll <= total) return origin;
+      }
+      return simData.origins[0];
+    }
+
+    function weightedHospital() {
+      const roll = Math.random();
+      let total = 0;
+      for (const hospital of simData.hospitals) {
+        total += hospital.capacity_share;
+        if (roll <= total) return hospital;
+      }
+      return simData.hospitals[0];
+    }
+
+    function vehicleType() {
+      const roll = Math.random();
+      if (roll < simData.ambulance_share) return "ambulance";
+      if (roll < simData.ambulance_share + simData.car_share) return "car";
+      return "people";
+    }
+
+    function randomBetween(min, max) {
+      return min + Math.random() * (max - min);
+    }
+
+    function buildRoute(origin, hospital) {
+      const routePoints = ROUTE_CATALOG[origin.name]?.[hospital.name];
+      if (routePoints) {
+        return routePoints.map(([lat, lng]) => L.latLng(lat, lng));
+      }
+      return [L.latLng(origin.lat, origin.lng), L.latLng(hospital.lat, hospital.lng)];
+    }
+
+    function updateWindowDisplay() {
+      const stamp = new Date(currentWindow.timestamp);
+      simDate.textContent = `${stamp.toLocaleDateString("en-CA", { month: "long", day: "numeric", year: "numeric" })} | ${currentWindow.time_range}`;
+      windowDemand.textContent = currentWindow.forecast_demand;
+      windowStatus.textContent = `${currentWindow.status} load for this hour. Pressure ${currentWindow.pressure}.`;
+      if (!running) {
+        simReadout.textContent = "Waiting to start";
+      }
+    }
+
+    function setWindow(windowId) {
+      currentWindow = simData.time_windows.find((item) => item.id === windowId) || simData.time_windows[0];
+      windowButtons.forEach((button) => {
+        button.classList.toggle("active", button.dataset.windowId === currentWindow.id);
+      });
+      updateWindowDisplay();
+      updateStatus();
+    }
+
+    function spawnDot() {
+      const origin = weightedOrigin();
+      const hospital = weightedHospital();
+      const kind = vehicleType();
+      const style = VEHICLE_STYLE[kind];
+      const route = buildRoute(origin, hospital);
+      const latlng = route[0];
+
+      const marker = L.circleMarker(latlng, {
+        radius: style.radius,
+        color: style.color,
+        fillColor: style.color,
+        fillOpacity: 0.92,
+        weight: 0,
+        renderer: canvasRenderer,
+        pane: "dots",
+      }).addTo(map);
+
+      dots.push({
+        kind,
+        marker,
+        current: latlng,
+        route,
+        segmentIndex: 1,
+        speed: style.speed,
+        stopUntil: 0,
+        stopMin: style.stopMin,
+        stopMax: style.stopMax,
+      });
+    }
+
+    function updateDot(dot, deltaMs, now) {
+      if (dot.stopUntil > now) {
+        return true;
+      }
+
+      const target = dot.route[dot.segmentIndex];
+      if (!target) {
+        map.removeLayer(dot.marker);
+        return false;
+      }
+
+      const currentPoint = map.project(dot.current, map.getZoom());
+      const targetPoint = map.project(target, map.getZoom());
+      const dx = targetPoint.x - currentPoint.x;
+      const dy = targetPoint.y - currentPoint.y;
+      const distance = Math.hypot(dx, dy);
+      const step = dot.speed * (deltaMs / 1000);
+
+      if (distance <= step) {
+        dot.current = target;
+        dot.marker.setLatLng(dot.current);
+        dot.segmentIndex += 1;
+
+        const signalMatch = SIGNALS.find(([lat, lng]) =>
+          Math.abs(lat - target.lat) < 0.00015 && Math.abs(lng - target.lng) < 0.00015
+        );
+
+        if (signalMatch && dot.segmentIndex < dot.route.length) {
+          dot.stopUntil = now + randomBetween(dot.stopMin, dot.stopMax);
+        }
+
+        if (dot.segmentIndex >= dot.route.length) {
+          map.removeLayer(dot.marker);
+          return false;
+        }
+
+        return true;
+      }
+
+      const nextPoint = L.point(
+        currentPoint.x + (dx / distance) * step,
+        currentPoint.y + (dy / distance) * step
+      );
+      dot.current = map.unproject(nextPoint, map.getZoom());
+      dot.marker.setLatLng(dot.current);
+      const show = activeMode === "all" || activeMode === dot.kind;
+      dot.marker.setStyle({ opacity: show ? 1 : 0, fillOpacity: show ? 0.92 : 0 });
+      return true;
+    }
+
+    function updateStatus() {
+      const visibleCount = dots.filter((dot) => activeMode === "all" || activeMode === dot.kind).length;
+      activeCount.textContent = visibleCount;
+      simReadout.textContent = running ? `${visibleCount} moving through ${simData.city}` : "Waiting to start";
+
+      const crisisLevel = currentWindow.forecast_demand + dots.length * 2.4;
+      if (!appliedAction && crisisLevel >= simData.crisis_threshold) {
+        crisisBanner.classList.remove("hidden");
+        crisisText.textContent = `${prediction.actions[0].name} recommended for ${currentWindow.time_range}. Flow is no longer controllable.`;
+        liveStatus.textContent = "Critical";
+        liveHorizon.textContent = `Action required on ${simDate.textContent}`;
+      } else if (appliedAction) {
+        crisisBanner.classList.remove("hidden");
+        liveStatus.textContent = "Recovering";
+        liveHorizon.textContent = `Top action applied for ${currentWindow.time_range}`;
+      } else {
+        crisisBanner.classList.add("hidden");
+        liveStatus.textContent = currentWindow.status;
+        liveHorizon.textContent = `${currentWindow.time_range} on ${new Date(currentWindow.timestamp).toLocaleDateString("en-CA")}`;
+      }
+    }
+
+    function loop(timestamp) {
+      if (!running) return;
+
+      if (!lastFrame) lastFrame = timestamp;
+      const deltaMs = Math.min(32, timestamp - lastFrame || 16);
+      lastFrame = timestamp;
+
+      const effectiveRate = simData.dot_spawn_rate * currentWindow.spawn_multiplier;
+      spawnAccumulator += effectiveRate * (deltaMs / 1000);
+      while (spawnAccumulator >= 1) {
+        spawnDot();
+        spawnAccumulator -= 1;
+      }
+
+      dots = dots.filter((dot) => updateDot(dot, deltaMs, timestamp));
+      updateStatus();
+      rafId = requestAnimationFrame(loop);
+    }
+
+    function startSimulation() {
+      if (running) return;
+      running = true;
+      lastFrame = null;
+      updateWindowDisplay();
+      rafId = requestAnimationFrame(loop);
+    }
+
+    function resetSimulation() {
+      running = false;
+      if (rafId) cancelAnimationFrame(rafId);
+      dots.forEach((dot) => {
+        if (map.hasLayer(dot.marker)) {
+          map.removeLayer(dot.marker);
+        }
+      });
+      dots = [];
+      spawnAccumulator = 0;
+      appliedAction = false;
+      lastFrame = null;
+      crisisBanner.classList.add("hidden");
+      activeCount.textContent = "0";
+      liveStatus.textContent = prediction.status;
+      liveHorizon.textContent = prediction.horizon;
+      updateWindowDisplay();
+    }
+
+    function applyTopAction() {
+      appliedAction = true;
+      simData.dot_spawn_rate = Math.max(0.7, simData.dot_spawn_rate * 0.5);
+      crisisText.textContent = `${prediction.actions[0].name} applied. Flow is slowing for ${currentWindow.time_range}.`;
+      updateStatus();
+    }
+
+    modeButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        modeButtons.forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        activeMode = button.dataset.mode;
+        updateStatus();
+      });
+    });
+
+    windowButtons.forEach((button) => {
+      button.addEventListener("click", () => {
+        setWindow(button.dataset.windowId);
+      });
+    });
+
+    startButton.addEventListener("click", startSimulation);
+    resetButton.addEventListener("click", resetSimulation);
+    actionButton.addEventListener("click", applyTopAction);
+
+    setWindow(simData.time_windows[0].id);
+  </script>
+</body>
+</html>

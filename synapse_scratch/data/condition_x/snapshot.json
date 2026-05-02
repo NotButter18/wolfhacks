@@ -1,0 +1,7 @@
+{
+  "hospital_capacity": 220,
+  "patient_inflow": 86,
+  "wait_time_hours": 7.5,
+  "scenario": "Condition X",
+  "note": "Crisis sample data for the dashboard"
+}
