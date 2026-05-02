@@ -95,6 +95,7 @@
             <span id="legend-redirected" class="hidden"><i class="legend-dot" style="background: #22c55e; border-color: #166534;"></i>Redirected</span>
           </div>
         </div>
+        <section id="occupancy-list" class="hospital-occupancy"></section>
       </div>
     </section>
 
@@ -109,9 +110,39 @@
   (function() {
     "use strict";
     const allSolutions = JSON.parse(document.getElementById("solutions-data").textContent);
-    let activeSolIdx = 0;
+     let activeSolIdx = 0;
     let running = false, rafId = null, dots = [], lastFrame = null, spawnAcc = 0;
     let routesReady = false;
+
+    /* ─── Occupancy Tracking ─── */
+    function updateOccupancyList() {
+      const list = document.getElementById("occupancy-list");
+      if (!list) return;
+      const sim = allSolutions[activeSolIdx].simulation;
+      
+      const sorted = [...sim.hospitals].sort((a,b) => (b.occ / b.limit) - (a.occ / a.limit));
+      
+      list.innerHTML = sorted.map((h, i) => {
+        const perc = Math.round((h.occ / h.limit) * 100);
+        const isCritical = perc >= 90;
+        return `
+          <div class="occ-card ${isCritical ? 'critical' : ''}" style="order: ${i}">
+            <div class="occ-rank">#${i + 1}</div>
+            <div class="occ-header">
+              <p class="occ-name">${h.name}</p>
+              <span class="occ-percent">${perc}%</span>
+            </div>
+            <div class="occ-bar-bg">
+              <div class="occ-bar-fill" style="width: ${Math.min(100, perc)}%"></div>
+            </div>
+            <div class="occ-stats">
+              <span>${h.occ} / ${h.limit} patients</span>
+              <span>${perc >= 90 ? 'Critical' : 'Stable'}</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    }
 
     const SIM_SPEED = 80, ROUTE_THIN = 4;
     const STYLE = {
@@ -138,6 +169,13 @@
       hospitalMarkers = []; originMarkers = [];
 
       sim.hospitals.forEach(h => {
+        // Initialize occupancy if not set
+        if (h.occ === undefined) {
+          const totalCap = {{ snapshot.hospital_capacity }};
+          h.limit = Math.max(10, Math.floor(totalCap * h.capacity_share));
+          h.occ = Math.floor(h.limit * (0.3 + Math.random() * 0.2));
+        }
+
         const color = h.kind === "popup" ? "#f59e0b" : "#6366f1";
         const m = L.circleMarker([h.lat, h.lng], {
           radius: 11, color, fillColor: color, fillOpacity: 1, weight: 3,
@@ -145,6 +183,7 @@
         }).addTo(map).bindTooltip(h.name, { direction: "top", offset: [0, -12] });
         hospitalMarkers.push(m);
       });
+      updateOccupancyList();
       sim.origins.forEach(o => {
         const m = L.circleMarker([o.lat, o.lng], {
           radius: 5, color: "#6b6b82", fillColor: "#6b6b82", fillOpacity: 0.9, weight: 1,
@@ -224,18 +263,75 @@
         radius: s.r, color: border, fillColor: fill,
         fillOpacity: 0.95, weight: s.w, renderer, pane: "dots"
       }).addTo(map);
-      dots.push({ kind, marker, cur: route[si], route, seg: si + 1, speed: rand(s.kmh[0], s.kmh[1]) / 3.6 });
+
+      // Track occupancy
+      hospital.occ++;
+      updateOccupancyList();
+
+      dots.push({ 
+        kind, marker, cur: route[si], route, seg: si + 1, 
+        speed: rand(s.kmh[0], s.kmh[1]) / 3.6,
+        targetHospital: hospital
+      });
+    }
+
+    function primeSimulation(sim) {
+      if (!routesReady) return;
+      // Initialize with high occupancy (reflecting an active crisis)
+      sim.hospitals.forEach(h => {
+        const totalCap = {{ snapshot.hospital_capacity }};
+        h.limit = Math.max(10, Math.floor(totalCap * h.capacity_share));
+        // Start at 85-110% capacity
+        h.occ = Math.floor(h.limit * (0.85 + Math.random() * 0.25));
+      });
+      updateOccupancyList();
+
+      // Spawn 50 initial vehicles at random progress points to show immediate flow
+      for (let i = 0; i < 50; i++) {
+        const origin = pick(sim.origins, "weight");
+        const hospital = pick(sim.hospitals, "capacity_share");
+        const kind = Math.random() < sim.ambulance_share ? "ambulance" : "car";
+        const s = STYLE[kind];
+        const key = `${origin.lat},${origin.lng}->${hospital.lat},${hospital.lng}`;
+        const route = routeCache.get(key);
+        if (!route || route.length < 2) continue;
+
+        const si = Math.floor(Math.random() * (route.length - 1));
+        const marker = L.circleMarker(route[si], {
+          radius: s.r, 
+          color: (allSolutions[activeSolIdx].id === "patient_redirection" && kind === "car" && hospital.id !== "central_ed") ? "#166534" : s.border, 
+          fillColor: (allSolutions[activeSolIdx].id === "patient_redirection" && kind === "car" && hospital.id !== "central_ed") ? "#22c55e" : s.fill,
+          fillOpacity: 0.95, weight: s.w, renderer, pane: "dots"
+        }).addTo(map);
+
+        dots.push({ 
+          kind, marker, cur: route[si], route, seg: si + 1, 
+          speed: rand(s.kmh[0], s.kmh[1]) / 3.6,
+          targetHospital: hospital
+        });
+      }
+      document.getElementById("sol-vehicles").textContent = dots.length;
     }
 
     function moveDot(dot, dt) {
       let budget = dot.speed * SIM_SPEED * (dt / 1000);
       while (budget > 0) {
         const tgt = dot.route[dot.seg];
-        if (!tgt) { map.removeLayer(dot.marker); return false; }
+        if (!tgt) { 
+          map.removeLayer(dot.marker); 
+          dot.targetHospital.occ = Math.max(0, dot.targetHospital.occ - 1);
+          updateOccupancyList();
+          return false; 
+        }
         const dist = dot.cur.distanceTo(tgt);
         if (dist <= budget) {
           budget -= dist; dot.cur = tgt; dot.seg++;
-          if (dot.seg >= dot.route.length) { map.removeLayer(dot.marker); return false; }
+          if (dot.seg >= dot.route.length) { 
+            map.removeLayer(dot.marker); 
+            dot.targetHospital.occ = Math.max(0, dot.targetHospital.occ - 1);
+            updateOccupancyList();
+            return false; 
+          }
         } else {
           const f = budget / dist;
           dot.cur = L.latLng(dot.cur.lat + (tgt.lat - dot.cur.lat) * f, dot.cur.lng + (tgt.lng - dot.cur.lng) * f);
@@ -255,6 +351,17 @@
       const sim = allSolutions[activeSolIdx].simulation;
       spawnAcc += sim.dot_spawn_rate * (dt / 1000);
       while (spawnAcc >= 1) { spawn(sim); spawnAcc -= 1; }
+
+      // "Success Bias": Accelerated drain for 2-minute demo
+      if (Math.random() < 0.05) { 
+        const victim = sim.hospitals[Math.floor(Math.random() * sim.hospitals.length)];
+        // Rapidly drain down to 40% occupancy baseline
+        if (victim.occ > victim.limit * 0.4) {
+          victim.occ = Math.max(Math.floor(victim.limit * 0.4), victim.occ - (Math.floor(Math.random() * 3) + 1));
+          updateOccupancyList();
+        }
+      }
+
       dots = dots.filter(d => moveDot(d, dt));
       document.getElementById("sol-vehicles").textContent = dots.length;
       rafId = requestAnimationFrame(loop);
@@ -289,7 +396,9 @@
 
       resetSim();
       drawMarkers(sol.simulation);
-      preloadRoutes(sol.simulation);
+      preloadRoutes(sol.simulation).then(() => {
+        primeSimulation(sol.simulation);
+      });
     }
 
     document.querySelectorAll(".flow-card").forEach(card => {

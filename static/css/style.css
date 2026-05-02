@@ -576,6 +576,100 @@ h1 {
   display: none !important;
 }
 
+/* ─── Hospital Occupancy List ─── */
+.hospital-occupancy {
+  margin-top: 24px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 16px;
+}
+
+.occ-card {
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.occ-rank {
+  position: absolute;
+  top: 0;
+  left: 0;
+  padding: 2px 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 800;
+  border-bottom-right-radius: 6px;
+  z-index: 10;
+}
+
+.occ-card.critical .occ-rank {
+  background: var(--red);
+}
+
+.occ-card.critical {
+  border-color: var(--red);
+  box-shadow: 0 0 12px var(--red-glow);
+}
+
+.occ-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 12px;
+}
+
+.occ-name {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+  margin: 0;
+}
+
+.occ-percent {
+  font-size: 0.82rem;
+  font-weight: 800;
+  color: var(--accent);
+}
+
+.occ-card.critical .occ-percent {
+  color: var(--red);
+}
+
+.occ-bar-bg {
+  height: 6px;
+  background: var(--line);
+  border-radius: 3px;
+  overflow: hidden;
+  margin-top: auto;
+}
+
+.occ-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+  width: 0%;
+}
+
+.occ-card.critical .occ-bar-fill {
+  background: var(--red);
+}
+
+.occ-stats {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
 /* ─── Responsive ─── */
 @media (max-width: 900px) {
   .stats,
