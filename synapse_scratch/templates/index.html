@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Synapse Scratch</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <main class="layout">
+    <section class="hero">
+      <p class="eyebrow">Synapse</p>
+      <h1>Core Variables Menu</h1>
+      <p class="subtitle">Start simple: three big drivers of the simulation.</p>
+    </section>
+
+    <section class="menu">
+      <div class="variable-card">
+        <h2>Hospital Capacity</h2>
+        <p>How many patients the system can handle before strain begins.</p>
+      </div>
+      <div class="variable-card">
+        <h2>Patient Inflow</h2>
+        <p>How many patients arrive during normal conditions or a surge.</p>
+      </div>
+      <div class="variable-card">
+        <h2>Wait Time</h2>
+        <p>How long people wait, which affects behavior and demand.</p>
+      </div>
+    </section>
+  </main>
+
+  <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+</body>
+</html>
