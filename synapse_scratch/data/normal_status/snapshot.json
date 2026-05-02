@@ -1,7 +1,0 @@
-{
-  "hospital_capacity": 220,
-  "patient_inflow": 42,
-  "wait_time_hours": 3.0,
-  "scenario": "Normal status",
-  "note": "Baseline sample data for the dashboard"
-}
